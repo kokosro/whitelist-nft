@@ -11,10 +11,15 @@ async function main() {
   console.log('compiling contracts');
   await hre.run('compile');
   console.log(`running migrations on ${hre.network.name} network`);
-
-  const capitalStruggle = await common.deployer('ContractName', {
+  const config = migrationsConfig[hre.network.name];
+  const nft = await common.deployer('NFTBase', {
     args: [
-
+      config.name,
+      config.symbol,
+      config.baseUri,
+      config.standardSupply,
+      config.reservedSupply,
+      config.mintCost,
     ],
   });
   let tx;
