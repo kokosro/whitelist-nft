@@ -3,13 +3,12 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-import "./CanReceiveFunds.sol";
-
-contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
+contract NFTBase is ERC721Enumerable, Ownable {
   using Counters for Counters.Counter;
 
-  enum MintType { STANDARD, RESERVED };
+  enum MintType { STANDARD, RESERVED }
   
   Counters.Counter private _standardTokenIds;
   Counters.Counter private _reservedTokenIds;
@@ -18,31 +17,60 @@ contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
   string private baseUri;
   uint256 public mintCost = 0.035 ether;
   
-  address public dev;
-  uint256 private maxPercentage = 10000;
-  uint256 public devShare = 200;
-
   string private _contractUri;
-  
-  modifier onlyDev {
-    require(msg.sender == dev, "ND");
-    _;
-  }
-  
+
+  bytes32 public merkleRoot;
+
+  bool public whitelistActive = false;
+  bool public paused = true;
+    
   constructor(string memory name_,
               string memory symbol_,
               string memory baseUri_,
               uint256 standardSupply_,
               uint256 reservedSupply_,
-              uint256 mintCost_,
-              address dev_)
+              uint256 mintCost_)
     ERC721(name_, symbol_) {
     baseUri = baseUri_;
     standardSupply = standardSupply_;
     reservedSupply = reservedSupply_;
-    dev = dev_;
     mintCost = mintCost_;
     
+  }
+
+  modifier onlyWhitelisted(bytes32[] memory proof) {
+    require(MerkleProof.verify(proof, merkleRoot, keccak256(abi.encodePacked(msg.sender))), "Only Whitelisted Addresses");
+    _;
+  }
+
+  modifier notPaused() {
+    require(paused == false, "Minting Is Paused");
+    _;
+  }
+
+  modifier notWhitelistPeriod() {
+    require(whitelistActive == false, "Whitelist Period Is Active");
+    _;
+  }
+
+  modifier whitelistPeriod() {
+    require(whitelistActive == true, "Whitelist Period Not Active");
+    _;
+  }
+  
+  function setMerkleRoot(bytes32 root_) external onlyOwner {
+    merkleRoot = root_;
+  }
+
+  function setWhitelistActive(bool status_) external onlyOwner {
+    if(status_ == true && merkleRoot == bytes32(0)){
+      revert("MerkleRoot must be set");
+    }
+    whitelistActive = status_;
+  }
+
+  function setPauseStatus(bool status_) external onlyOwner {
+    paused = status_;
   }
   
   function setBaseUri(string memory baseUri_) external onlyOwner {
@@ -65,9 +93,6 @@ contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
     mintCost = amount_;
   }
 
-  function setDev(address _dev) external onlyDev {
-    dev = _dev;
-  }
   function mintStandard(address tokenOwner) internal returns(uint256){
     if(_standardTokenIds.current() + 1 > standardSupply){
       return 0;
@@ -88,42 +113,47 @@ contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
     return tokenId;
   }
   
-  function totalSupply() external view returns(uint256){
+  function totalSupply() public override view returns(uint256){
     return _standardTokenIds.current() + _reservedTokenIds.current();
   }
-  
-  function mint(uint256 numberOfTokens) external payable returns(uint256[] memory){
+
+  function mintStandardBatch(uint256 numberOfTokens, address tokensOwner) internal returns(uint256, uint256[] memory) {
     uint256[] memory generatedTokens = new uint256[](numberOfTokens);
     uint256 generatedCount = 0;
     for(uint256 i = 0; i < numberOfTokens; i++){
-      generatedTokens[i] = mintStandard(msg.sender);
+      generatedTokens[i] = mintStandard(tokensOwner);
       if(generatedTokens[i] > 0){
         generatedCount += 1;
       }
     }
+    return (generatedCount, generatedTokens);
+  }
 
+  function checkPaymentAndRefund(uint256 generatedCount) internal {
     uint256 requiredPayment = generatedCount * mintCost;
-
     require(msg.value >= requiredPayment, "Invalid payment");
     if(msg.value > requiredPayment){
       payable(msg.sender).transfer(msg.value - requiredPayment);
     }
+  }
+  
+  function mint(uint256 numberOfTokens) external payable notPaused notWhitelistPeriod returns(uint256[] memory){
+    (uint256 generatedCount, uint256[] memory generatedTokens) = mintStandardBatch(numberOfTokens, msg.sender);
+    checkPaymentAndRefund(generatedCount);
     return generatedTokens;
   }
   
   function exists(uint256 tokenId) external view returns(bool) {
-    
     return _exists(tokenId);
-    
   }
 
-  function adminMint(uint256 count, uint256 type, address tokenOwner) public onlyOwner returns(uint256[] memory) {
+  function adminMint(uint256 count, uint256 mintType, address tokenOwner) public onlyOwner returns(uint256[] memory) {
     uint256[] memory generatedTokens = new uint256[](count);
-    if(type == uint256(MintType.STANDARD)){
+    if(mintType == uint256(MintType.STANDARD)){
       for(uint256 i = 0; i < count; i++){
         generatedTokens[i] = mintStandard(tokenOwner);
       }
-    } else if(type == uint256(MintType.RESERVED)){
+    } else if(mintType == uint256(MintType.RESERVED)){
       for(uint256 i = 0; i < count; i++){
         generatedTokens[i] = mintReserved(tokenOwner);
       }
@@ -131,8 +161,8 @@ contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
     return generatedTokens;
   }
 
-  function adminMint(uint256 count, uint256 type) external onlyOwner returns(uint256[] memory) {
-    return adminMint(count, type, msg.sender);
+  function adminMint(uint256 count, uint256 mintType) external onlyOwner returns(uint256[] memory) {
+    return adminMint(count, mintType, msg.sender);
   }
 
   function adminMint(uint256 count) external onlyOwner returns(uint256[] memory) {
@@ -142,20 +172,36 @@ contract NFTBase is ERC721Enumerable, CanReceiveFunds, Ownable {
   function adminMint() external onlyOwner returns(uint256[] memory) {
     return adminMint(1, uint256(MintType.RESERVED), msg.sender);
   }
+
+  function whitelistMint(uint256 numberOfTokens, bytes32[] memory merkleProof)
+    external
+    payable
+    notPaused
+    whitelistPeriod
+    onlyWhitelisted(merkleProof)
+    returns(uint256[] memory){
+    
+    (uint256 generatedCount, uint256[] memory generatedTokens) = mintStandardBatch(numberOfTokens, msg.sender);
+    checkPaymentAndRefund(generatedCount);
+    return generatedTokens;
+    
+  }
   
-  function withdraw() external onlyOwner {
+  function withdraw()
+    external
+    onlyOwner {
     
     uint256 available = address(this).balance;
     require(available > 0, "NB");
 
-    uint256 devPayment = (available * devShare) / maxPercentage;
+    payable(msg.sender).transfer(available);
     
-    payable(msg.sender).transfer(available - devPayment);
-    
-    if(devPayment > 0){
-      payable(dev).transfer(devPayment);
-    }
-    
+  }
+
+  receive() external payable {
+  }
+  
+  fallback() external payable {
   }
   
 }

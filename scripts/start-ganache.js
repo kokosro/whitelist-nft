@@ -22,6 +22,7 @@ const generateAccounts = (count = 1) => {
     };
   });
   fs.writeFileSync('./ganache-accounts', accounts.map(({ secretKey }) => secretKey).join(','), { encoding: 'utf8' });
+  console.log(`accounts: ${fs.readFileSync('./ganache-accounts')}`);
   return accounts;
 };
 
