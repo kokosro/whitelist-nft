@@ -11,8 +11,8 @@ module.exports = {
     mintCost: ethers.utils.parseUnits('0.03', 18),
   },
   ethereum: {
-    name: 'ClimateCubes',
-    symbol: 'ClimbateCubes',
+    name: 'NFTName',
+    symbol: 'NFT',
     baseUri: '',
     contractUri: '',
     standardSupply: 5355,
@@ -20,8 +20,8 @@ module.exports = {
     mintCost: ethers.utils.parseUnits('0.03', 18),
   },
   rinkeby: {
-    name: 'ClimateCubes',
-    symbol: 'ClimbateCubes',
+    name: 'NFTName',
+    symbol: 'NFT',
     baseUri: '',
     contractUri: '',
     standardSupply: 5355,
